@@ -1,0 +1,47 @@
+{
+  "divergencia_tmdb_imdb": {
+    "ok": true,
+    "motivo": "top 10 confere",
+    "texto_ok": true,
+    "pergunta": "Quais filmes têm a maior divergência entre a nota TMDB e a nota IMDb?",
+    "categoria": "Popularidade e engajamento",
+    "requisicoes": 2,
+    "modelo": "nvidia/nemotron-3.5-lightning:free",
+    "segundos": 27.7,
+    "sql": [
+      "SELECT m.titulo, ABS(f.nota_tmdb - f.nota_imdb) AS divergencia\nFROM fact_movies_performance f\nJOIN dim_movies m ON f.sk_movie_id = m.sk_movie_id\nWHERE f.nota_tmdb > 0 AND f.nota_imdb > 0\nORDER BY divergencia DESC\nLIMIT 10"
+    ],
+    "resposta": "**Filmes com maior divergência entre a nota TMDB e a nota IMDb (considerando apenas filmes que possuem as duas notas maiores que zero)**  \n\n1. **Country Music: Live At The Ryman** – divergência **9.40**  \n2. **Cold Little Bird** – divergência **9.27**  \n3. **Alfredo** – divergência **9.00**  \n4. **Blade And Termeh** – divergência **8.80**  \n5. **The Farmer** – divergência **8.50**  \n6. **Coming Out: A 50 Year History** – divergência **8.50**  \n7. **Behave, Kid** – divergência **8.40**  \n8. **Fan Club** – divergência **8.30**  \n9. **Afraid Of The Night** – divergência **8.30**  \n10. **Sketchy Times With Lilly Singh** – divergência **8.30**  \n\n**Critério usado:**  \n- Só foram incluídos filmes com `nota_tmdb > 0` **e** `nota_imdb > 0`.  \n- A divergência foi calculada como `ABS(nota_tmdb – nota_imdb)`.  \n- Os 10 filmes com maior divergência foram retornados, ordenados de forma decrescente.  \n\nEssa lista mostra onde a percepção do público (IMDb) difere mais da avaliação no TMDB, o que pode indicar títulos com polarização de opiniões ou diferenças culturais de avaliação.",
+    "data": "2026-10-05T14:52:48"
+  },
+  "ator_ultimos_5_anos": {
+    "ok": true,
+    "motivo": "top 1 confere",
+    "texto_ok": true,
+    "pergunta": "Qual ator teve mais participações em filmes lançados nos últimos 5 anos?",
+    "categoria": "Elenco e equipe",
+    "requisicoes": 2,
+    "modelo": "nvidia/nemotron-3.5-lightning:free",
+    "segundos": 26.3,
+    "sql": [
+      "WITH recent_movies AS (\n   SELECT sk_movie_id FROM dim_movies WHERE ano_lancamento >= 2021\n),\nactor_appearances AS (\n   SELECT p.sk_person_id, p.nome_pessoa, COUNT(DISTINCT bm.sk_movie_id) as movie_count\n   FROM bridge_movie_person bm\n   JOIN dim_people p ON bm.sk_person_id = p.sk_person_id\n   WHERE p.tipo_pessoa = 'Ator'\n   AND bm.sk_movie_id IN (SELECT sk_movie_id FROM recent_movies)\n   GROUP BY p.sk_person_id, p.nome_pessoa\n)\nSELECT nome_pessoa, movie_count\nFROM actor_appearances\nORDER BY movie_count DESC\nLIMIT 1"
+    ],
+    "resposta": "**Ator com mais participações nos últimos 5 anos:** **Eric Roberts** – 88 filmes (ano ≥ 2021).\n\n**Critério usado:**  \n- Filmes lançados a partir de 2021 (últimos 5 anos).  \n- Contagem de filmes distintos por ator (tipo pessoa = ‘Ator’) através da tabela `bridge_movie_person`.  \n- Resultado ordenado pela contagem decrescente, limitando ao topo 1.  \n\nEssa contagem inclui todas as participações de Eric Roberts nesses filmes, independentemente de seu papel específico (principal, coadjuvante, cameo, etc.).",
+    "data": "2026-10-05T14:53:17"
+  },
+  "dupla_ator_diretor": {
+    "ok": true,
+    "motivo": "top 1 confere",
+    "texto_ok": true,
+    "pergunta": "Qual dupla ator–diretor mais trabalhou junta?",
+    "categoria": "Elenco e equipe",
+    "requisicoes": 2,
+    "modelo": "nvidia/nemotron-3.5-lightning:free",
+    "segundos": 64.3,
+    "sql": [
+      "SELECT ap.nome_pessoa AS ator, dp.nome_pessoa AS diretor, COUNT(DISTINCT am.sk_movie_id) AS total_movies\nFROM bridge_movie_person am\nJOIN dim_people ap ON am.sk_person_id = ap.sk_person_id AND ap.tipo_pessoa = 'Ator'\nJOIN bridge_movie_person dm\n   ON am.sk_movie_id = dm.sk_movie_id\nJOIN dim_people dp ON dm.sk_person_id = dp.sk_person_id AND dp.tipo_pessoa = 'Diretor'\nGROUP BY ap.nome_pessoa, dp.nome_pessoa\nORDER BY total_movies DESC\nLIMIT 1"
+    ],
+    "resposta": "A dupla **ator + diretor** que mais trabalhou junta no catálogo da CineData é:\n\n1. **Joe Anoa'i** (ator) – **Kevin Dunn** (diretor)  \n   – **37 filmes** em comum.\n\n*Critério:* foram contabilizados os filmes distintos em que a mesma pessoa aparece como “Ator” e como “Diretor” na tabela `bridge_movie_person`, agrupados pelo par (ator, diretor) e ordenados pelo maior número de filmes compartilhados.",
+    "data": "2026-10-05T14:54:25"
+  }
+}

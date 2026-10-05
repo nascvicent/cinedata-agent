@@ -122,7 +122,10 @@ pergunta -> FastAPI -> agente (PydanticAI) -> tool executar_sql -> SQLite (read-
   (receita = faturamento = bilheteria, margem de lucro, "receita informada" etc.).
 - **Guardrails de SQL** (`app/database.py`): conexão `mode=ro`, authorizer do SQLite que só
   permite `SELECT`, uma instrução por chamada, tabelas internas bloqueadas, limite de 50 linhas
-  e timeout de 5 s por consulta.
+  e timeout de 30 s por consulta.
+- **Desempenho**: o banco tem ~580 MB e as chaves são hashes em texto. As conexões usam
+  `mmap` (junções grandes caíram de ~25 s para ~2 s) e o prompt orienta a ordem de junção nas
+  consultas pessoa × pessoa, como a da dupla ator–diretor.
 - **Fallback entre modelos** (`app/agent.py`): se um modelo falhar (ex.: `429` por pool lotado),
   o próximo da lista `MODELOS` é tentado. Não há retry no mesmo modelo, porque requisições que
   falham também contam na cota diária.
@@ -140,6 +143,41 @@ Os testes usam um banco temporário e um modelo falso: **não consomem requisiç
 Cobrem os guardrails de SQL, a geração do schema e o fluxo completo da API (incluindo o cache
 e a ordem dos eventos do streaming).
 
+## Avaliação
+
+`avaliacao/casos.py` tem as 14 perguntas de exemplo do enunciado e mais 2 casos de guardrail
+(pergunta fora do escopo e pedido para apagar dados). Cada pergunta tem um SQL de referência,
+às vezes mais de um quando a pergunta admite leituras razoáveis (ex.: nota IMDb ou TMDB).
+O agente passa quando **os dados que ele consultou** batem com os da referência. A comparação
+olha os valores, não o SQL: aceita colunas em outra ordem, arredondamento, percentual e
+empates na última posição de um ranking.
+
+```bash
+# 1. Valida as referências direto no banco: não chama o modelo.
+python -m avaliacao
+
+# 2. Roda os casos pendentes gastando no máximo 10 chamadas (padrão).
+python -m avaliacao --executar
+
+# Escolhendo casos e orçamento:
+python -m avaliacao --executar --orcamento 6 --ids dupla_ator_diretor,fora_do_escopo
+```
+
+Cuidados com a cota:
+
+- Sem `--executar`, nada é enviado ao OpenRouter.
+- A execução consulta a cota antes de começar e nunca passa de `--orcamento` nem do que
+  resta no dia. Para isso, reserva o pior caso (`MAX_REQUISICOES_POR_PERGUNTA`) antes de cada
+  pergunta.
+- Os resultados ficam em `avaliacao/resultados.json`, e a próxima execução continua de onde
+  parou (`--refazer` força rodar de novo). A avaliação completa custa umas 32 chamadas, então
+  dá para dividir em dias.
+- `avaliacao/relatorio.md` traz a tabela de acertos, gerada a cada execução.
+
+Montar as referências já revelou três problemas, corrigidos antes de gastar qualquer chamada:
+consultas de elenco que passavam do timeout (resolvido com `mmap` e uma dica de ordem de junção),
+e `nota_tmdb = 0` usada como "sem nota" em ~36 mil filmes (agora o prompt manda filtrar).
+
 ## Estrutura
 
 ```
@@ -151,6 +189,10 @@ app/
   database.py   # acesso read-only, guardrails e introspecção do schema
   schemas.py    # modelos de entrada/saída da API
   config.py     # configurações (.env)
+avaliacao/
+  casos.py      # perguntas e SQL de referência
+  comparar.py   # comparação tolerante entre resultado do agente e referência
+  __main__.py   # `python -m avaliacao`
 tests/
 ```
 

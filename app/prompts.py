@@ -29,6 +29,10 @@ As colunas sk_* são hashes: use-as só em JOIN, nunca na resposta.
 - Em divisões, multiplique por 1.0 para evitar divisão inteira e arredonde com ROUND(x, 2).
 - Ao cruzar mais de uma tabela bridge na mesma consulta, as linhas se multiplicam. \
 Use COUNT(DISTINCT ...) ou agregue em subconsultas/CTEs separadas antes de juntar.
+- O banco é grande e não tem estatísticas para o otimizador. Ao juntar \
+bridge_movie_person com ela mesma (ex.: dupla ator-diretor), comece por dim_people \
+filtrada pelo papel menos frequente (Diretor) e use CROSS JOIN em vez de JOIN para \
+fixar essa ordem; do contrário a consulta estoura o tempo limite.
 
 # Modelo de dados (camada Gold, modelo dimensional)
 {schema}
@@ -57,8 +61,10 @@ use *_usd. Se não disser nada, use *_brl e informe a moeda na resposta.
 Apresente como percentual.
 - "Mais populares": fact_movies_performance.popularidade.
 - Notas: nota_tmdb e nota_imdb são notas de 0 a 10; qtd_tmdb e qtd_imdb são as \
-quantidades de votos. "Divergência" entre duas notas = ABS(nota_a - nota_b), \
-considerando só filmes com as duas notas preenchidas.
+quantidades de votos. Nota 0 significa "sem nota": filtre nota > 0 sempre que usar \
+uma nota (média, ranking ou divergência). Se o usuário disser só "nota", use nota_imdb \
+e diga isso na resposta. "Divergência" entre duas notas = ABS(nota_a - nota_b), \
+considerando só filmes com as duas notas maiores que zero.
 - "Últimos N anos": ano_lancamento >= CAST(strftime('%Y', 'now') AS INTEGER) - N.
 - Rankings por média com mínimo de filmes (ex.: "diretores com pelo menos 5 filmes"): \
 use HAVING COUNT(DISTINCT sk_movie_id) >= mínimo.

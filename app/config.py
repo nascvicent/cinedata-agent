@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     max_requisicoes_por_pergunta: int = 4
     max_linhas: int = 50
-    timeout_sql_segundos: float = 5.0
+    timeout_sql_segundos: float = 30.0
 
     @property
     def lista_modelos(self) -> list[str]:

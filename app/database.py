@@ -16,6 +16,9 @@ TABELAS_OCULTAS = {"alembic_version"}
 # Colunas de texto livre: não vale a pena amostrar valores distintos.
 COLUNAS_TEXTO_LIVRE = {"sinopse", "text", "titulo", "name", "url_poster", "url_backdrop"}
 MAX_VALORES_DISTINTOS = 12
+# O banco tem ~580 MB e as chaves são hashes em texto: com o cache padrão do SQLite (2 MB)
+# junções grandes ficam lentas. O mmap aproveita o cache do sistema entre conexões.
+MMAP_BYTES = 1 << 30
 
 _ACOES_PERMITIDAS = {
     sqlite3.SQLITE_SELECT,
@@ -34,7 +37,9 @@ def _conectar(caminho: str) -> sqlite3.Connection:
         raise FileNotFoundError(
             f"Banco '{caminho}' não encontrado. Coloque o cinerocket.db na raiz do projeto."
         )
-    return sqlite3.connect(f"file:{Path(caminho).as_posix()}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{Path(caminho).as_posix()}?mode=ro", uri=True)
+    conn.execute(f"PRAGMA mmap_size = {MMAP_BYTES}")
+    return conn
 
 
 def _authorizer(acao: int, arg1: str | None, *_: Any) -> int:
@@ -48,7 +53,7 @@ def _authorizer(acao: int, arg1: str | None, *_: Any) -> int:
 
 
 def executar_select(
-    caminho: str, sql: str, max_linhas: int = 50, timeout: float = 5.0
+    caminho: str, sql: str, max_linhas: int = 50, timeout: float = 30.0
 ) -> dict[str, Any]:
     """Executa uma única consulta de leitura e devolve colunas, linhas e se houve corte."""
     sql = sql.strip().rstrip(";").strip()
