@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CineData | Pergunte ao catálogo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --tela: #e9e7f0;        /* fundo: tela de projeção apagada */
+    --papel: #ffffff;       /* corpo do ingresso */
+    --tinta: #231f2e;       /* texto */
+    --tinta-suave: #5d5870;
+    --cortina: #8f1d2c;     /* canhoto do ingresso, ações */
+    --cortina-escura: #6d1320;
+    --letreiro: #f2c230;    /* foco e destaques */
+    --linha: #d4d0e0;
+    --display: "Bricolage Grotesque", "Trebuchet MS", "Segoe UI", sans-serif;
+    --texto: "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: Consolas, "Cascadia Code", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--tela);
+    color: var(--tinta);
+    font-family: var(--texto);
+    font-size: 1rem;
+    line-height: 1.55;
+  }
+  .pagina { max-width: 60rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+
+  /* Cabeçalho */
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  h1 { font-family: var(--display); font-weight: 800; font-size: clamp(2.2rem, 6vw, 3.6rem); line-height: 1; letter-spacing: -0.03em; }
+  .cota { font-size: .9rem; color: var(--tinta-suave); }
+  .cota strong { color: var(--tinta); font-variant-numeric: tabular-nums; }
+  .cota.baixa strong { color: var(--cortina); }
+  .apresentacao { margin-top: .75rem; max-width: 38rem; color: var(--tinta-suave); }
+
+  /* Pergunta */
+  .caixa { margin-top: 2rem; display: flex; gap: .5rem; }
+  .caixa input {
+    flex: 1; min-width: 0;
+    font: inherit; font-size: 1.05rem;
+    padding: .9rem 1rem;
+    border: 2px solid var(--tinta); border-radius: 6px;
+    background: var(--papel); color: var(--tinta);
+  }
+  button { font: inherit; cursor: pointer; }
+  .caixa button {
+    font-family: var(--display); font-weight: 600; font-size: 1.05rem;
+    padding: 0 1.4rem;
+    border: 2px solid var(--cortina); border-radius: 6px;
+    background: var(--cortina); color: #fff;
+  }
+  .caixa button:hover { background: var(--cortina-escura); border-color: var(--cortina-escura); }
+  .caixa button:disabled { opacity: .6; cursor: wait; }
+  :focus-visible { outline: 3px solid var(--letreiro); outline-offset: 2px; }
+
+  .sugestoes { margin-top: .9rem; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+  .sugestoes span { font-size: .9rem; color: var(--tinta-suave); }
+  .sugestoes button {
+    font-size: .9rem; padding: .3rem .75rem;
+    border: 1px solid var(--tinta-suave); border-radius: 999px;
+    background: transparent; color: var(--tinta);
+  }
+  .sugestoes button:hover { background: var(--papel); }
+
+  /* Ingresso: canhoto com a pergunta, corpo com a resposta */
+  #respostas { margin-top: 2.5rem; display: grid; gap: 1.5rem; }
+  .ingresso { display: grid; grid-template-columns: 15rem 1fr; position: relative; }
+  .canhoto {
+    background: var(--cortina); color: #fff;
+    padding: 1.25rem 1.25rem 1.25rem 1.4rem;
+    border-radius: 10px 0 0 10px;
+    font-family: var(--display); font-weight: 600; font-size: 1.15rem; line-height: 1.25;
+    display: flex; flex-direction: column; justify-content: space-between; gap: 1rem;
+  }
+  .canhoto small { font-family: var(--texto); font-weight: 400; font-size: .8rem; opacity: .85; line-height: 1.4; }
+  .corpo {
+    background: var(--papel);
+    padding: 1.25rem 1.5rem;
+    border-radius: 0 10px 10px 0;
+    border-left: 2px dashed var(--linha);
+    min-width: 0;
+  }
+  /* picotes entre canhoto e corpo */
+  .ingresso::before, .ingresso::after {
+    content: ""; position: absolute; left: 15rem; width: 1.1rem; height: 1.1rem;
+    margin-left: -.55rem; border-radius: 50%; background: var(--tela);
+  }
+  .ingresso::before { top: -.55rem; }
+  .ingresso::after { bottom: -.55rem; }
+
+  .texto { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 42rem; }
+  .texto code, pre { font-family: var(--mono); font-size: .88em; }
+  .texto code { background: var(--tela); padding: 0 .3em; border-radius: 3px; }
+  .ingresso.erro .canhoto { background: var(--tinta); }
+  .ingresso.erro .texto { color: var(--cortina); }
+  .aguardando .texto { color: var(--tinta-suave); }
+
+  details { margin-top: 1.1rem; border-top: 1px solid var(--linha); padding-top: .8rem; }
+  summary { cursor: pointer; font-size: .92rem; color: var(--tinta-suave); width: fit-content; }
+  summary:hover { color: var(--tinta); }
+  pre { margin-top: .7rem; padding: .9rem 1rem; background: var(--tinta); color: #f1eef8; border-radius: 6px; overflow-x: auto; line-height: 1.5; }
+  .rolagem { margin-top: .7rem; overflow-x: auto; }
+  table { border-collapse: collapse; font-size: .9rem; width: 100%; }
+  th, td { text-align: left; padding: .4rem .7rem; border-bottom: 1px solid var(--linha); white-space: nowrap; }
+  th { font-weight: 600; border-bottom: 2px solid var(--tinta); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .aviso { margin-top: .5rem; font-size: .85rem; color: var(--tinta-suave); }
+
+  .vazio { color: var(--tinta-suave); border: 2px dashed var(--linha); border-radius: 10px; padding: 1.5rem; }
+
+  @media (max-width: 640px) {
+    .caixa { flex-direction: column; }
+    .caixa button { padding: .8rem; }
+    .ingresso { grid-template-columns: 1fr; }
+    .canhoto { border-radius: 10px 10px 0 0; }
+    .corpo { border-radius: 0 0 10px 10px; border-left: 0; border-top: 2px dashed var(--linha); }
+    .ingresso::before, .ingresso::after { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="pagina">
+  <header>
+    <h1>CineData</h1>
+    <p class="cota" id="cota" hidden></p>
+  </header>
+  <p class="apresentacao">Pergunte em português sobre bilheteria, notas, elenco, gêneros e produtoras. A resposta vem do catálogo, junto com a consulta usada para chegar nela.</p>
+
+  <form class="caixa" id="formulario">
+    <input id="pergunta" type="text" maxlength="500" autocomplete="off" required
+           aria-label="Sua pergunta" placeholder="Ex.: Qual produtora teve o maior lucro total?">
+    <button id="enviar" type="submit">Perguntar</button>
+  </form>
+
+  <div class="sugestoes" id="sugestoes">
+    <span>Experimente:</span>
+  </div>
+
+  <main id="respostas" aria-live="polite">
+    <p class="vazio" id="vazio">Nenhuma pergunta ainda. Escreva a sua acima ou escolha uma das sugestões.</p>
+  </main>
+</div>
+
+<script>
+const SUGESTOES = [
+  "Os 5 filmes mais populares",
+  "Lucro médio por gênero",
+  "Diretores com maior nota média (mínimo de 5 filmes)",
+  "Dupla ator–diretor que mais trabalhou junta",
+  "Filmes mais avaliados pelos usuários",
+];
+
+const $ = (id) => document.getElementById(id);
+const form = $("formulario"), campo = $("pergunta"), botao = $("enviar"), lista = $("respostas");
+
+function el(tag, classe, texto) {
+  const e = document.createElement(tag);
+  if (classe) e.className = classe;
+  if (texto !== undefined) e.textContent = texto;
+  return e;
+}
+
+// Markdown mínimo e seguro: escapa tudo, depois aplica **negrito** e `código`.
+function formatar(texto) {
+  const seguro = texto.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  return seguro
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .trim();
+}
+
+function celula(valor) {
+  const td = el("td");
+  if (typeof valor === "number") {
+    td.className = "num";
+    td.textContent = valor.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+  } else {
+    td.textContent = valor === null ? "(vazio)" : String(valor);
+  }
+  return td;
+}
+
+function blocoConsultas(consultas) {
+  const det = el("details");
+  det.append(el("summary", "", consultas.length > 1 ? "Ver as consultas e os dados" : "Ver a consulta e os dados"));
+  for (const c of consultas) {
+    det.append(el("pre", "", c.sql));
+    if (c.erro) { det.append(el("p", "aviso", "Esta consulta falhou: " + c.erro)); continue; }
+    if (!c.linhas.length) { det.append(el("p", "aviso", "A consulta não retornou linhas.")); continue; }
+    const tabela = el("table"), cab = el("tr");
+    c.colunas.forEach((n) => cab.append(el("th", "", n)));
+    tabela.append(cab);
+    c.linhas.forEach((linha) => { const tr = el("tr"); linha.forEach((v) => tr.append(celula(v))); tabela.append(tr); });
+    const rolagem = el("div", "rolagem"); rolagem.append(tabela); det.append(rolagem);
+    if (c.truncado) det.append(el("p", "aviso", "Mostrando só as primeiras " + c.linhas.length + " linhas."));
+  }
+  return det;
+}
+
+function novoIngresso(pergunta) {
+  const ingresso = el("article", "ingresso aguardando");
+  const canhoto = el("div", "canhoto");
+  canhoto.append(el("p", "", pergunta), el("small", "", ""));
+  const corpo = el("div", "corpo");
+  corpo.append(el("div", "texto", "Consultando o catálogo…"));
+  ingresso.append(canhoto, corpo);
+  $("vazio")?.remove();
+  lista.prepend(ingresso);
+  return ingresso;
+}
+
+function preencher(ingresso, dados) {
+  ingresso.classList.remove("aguardando");
+  ingresso.querySelector(".texto").innerHTML = formatar(dados.resposta);
+  const rodape = [];
+  if (dados.cache) rodape.push("Resposta guardada, sem nova chamada ao modelo");
+  else {
+    if (dados.modelo) rodape.push("Modelo: " + dados.modelo);
+    rodape.push(dados.requisicoes_llm + (dados.requisicoes_llm === 1 ? " chamada" : " chamadas") + " ao modelo");
+  }
+  ingresso.querySelector("small").innerHTML = rodape.map((t) => formatar(t)).join("<br>");
+  if (dados.consultas.length) ingresso.querySelector(".corpo").append(blocoConsultas(dados.consultas));
+}
+
+function falhar(ingresso, mensagem) {
+  ingresso.classList.remove("aguardando");
+  ingresso.classList.add("erro");
+  ingresso.querySelector(".texto").textContent = mensagem;
+}
+
+async function atualizarCota() {
+  try {
+    const r = await fetch("/cota");
+    if (!r.ok) return;
+    const corpo = await r.json();
+    const uso = (corpo.data ?? corpo).free_model_daily_requests ?? corpo.free_model_daily_requests;
+    if (!uso || typeof uso.remaining !== "number") return;
+    const p = $("cota");
+    p.innerHTML = "Restam <strong>" + uso.remaining + "</strong> de " + uso.limit + " chamadas ao modelo hoje";
+    p.classList.toggle("baixa", uso.remaining <= 10);
+    p.hidden = false;
+  } catch { /* a cota é só informativa */ }
+}
+
+async function perguntar(pergunta) {
+  botao.disabled = true;
+  botao.textContent = "Consultando…";
+  const ingresso = novoIngresso(pergunta);
+  try {
+    const r = await fetch("/perguntar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pergunta }),
+    });
+    const corpo = await r.json().catch(() => null);
+    if (r.ok) preencher(ingresso, corpo);
+    else if (r.status === 503) falhar(ingresso, "Nenhum modelo respondeu agora. Os modelos gratuitos podem estar lotados ou a cota do dia acabou (ela renova às 21h). Tente de novo em alguns minutos.");
+    else if (r.status === 422 && Array.isArray(corpo?.detail)) falhar(ingresso, "A pergunta precisa ter entre 3 e 500 caracteres.");
+    else falhar(ingresso, corpo?.detail ?? "Não foi possível responder (erro " + r.status + ").");
+  } catch {
+    falhar(ingresso, "Sem conexão com o servidor. Confira se a API está rodando e tente de novo.");
+  } finally {
+    botao.disabled = false;
+    botao.textContent = "Perguntar";
+    atualizarCota();
+  }
+}
+
+form.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const pergunta = campo.value.trim();
+  if (pergunta.length < 3 || botao.disabled) return;
+  campo.value = "";
+  perguntar(pergunta);
+});
+
+SUGESTOES.forEach((s) => {
+  const b = el("button", "", s);
+  b.type = "button";
+  b.addEventListener("click", () => { campo.value = s; campo.focus(); });
+  $("sugestoes").append(b);
+});
+
+atualizarCota();
+</script>
+</body>
+</html>
