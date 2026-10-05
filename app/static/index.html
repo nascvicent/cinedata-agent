@@ -98,7 +98,6 @@
   .texto code { background: var(--tela); padding: 0 .3em; border-radius: 3px; }
   .ingresso.erro .canhoto { background: var(--tinta); }
   .ingresso.erro .texto { color: var(--cortina); }
-  .aguardando .texto { color: var(--tinta-suave); }
 
   details { margin-top: 1.1rem; border-top: 1px solid var(--linha); padding-top: .8rem; }
   summary { cursor: pointer; font-size: .92rem; color: var(--tinta-suave); width: fit-content; }
@@ -111,6 +110,33 @@
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .aviso { margin-top: .5rem; font-size: .85rem; color: var(--tinta-suave); }
 
+  /* Progresso ao vivo */
+  .etapa { display: flex; align-items: center; gap: .55rem; font-size: .9rem; color: var(--tinta-suave); margin-bottom: .6rem; }
+  .etapa::before {
+    content: ""; flex: none; width: .55rem; height: .55rem; border-radius: 50%;
+    background: var(--letreiro); box-shadow: 0 0 0 0 rgba(242, 194, 48, .6);
+    animation: pulso 1.2s ease-out infinite;
+  }
+  @keyframes pulso { to { box-shadow: 0 0 0 .55rem rgba(242, 194, 48, 0); } }
+  .sql-ao-vivo { margin: 0 0 .9rem; font-size: .82em; max-height: 9rem; overflow: auto; }
+  .cursor { display: inline-block; width: .5ch; height: 1.1em; vertical-align: text-bottom; margin-left: 1px; background: var(--cortina); animation: piscar 1s steps(1) infinite; }
+  @keyframes piscar { 50% { opacity: 0; } }
+  .relogio { font-variant-numeric: tabular-nums; }
+
+  /* Gráfico de barras para resultados "rótulo + número" */
+  .grafico { margin-top: 1.1rem; display: grid; grid-template-columns: minmax(0, 14rem) minmax(0, 1fr); gap: .3rem .75rem; align-items: center; font-size: .86rem; max-width: 42rem; }
+  .grafico .legenda { grid-column: 1 / -1; font-size: .8rem; color: var(--tinta-suave); margin-bottom: .2rem; }
+  .grafico .rotulo { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+  .grafico .trilho { display: flex; align-items: center; gap: .5rem; min-width: 0; overflow: hidden; }
+  .grafico .barra { flex: none; height: .95rem; border-radius: 0 3px 3px 0; background: var(--cortina); min-width: 2px; transform-origin: left; animation: crescer .5s ease-out both; }
+  .grafico .barra.topo { background: var(--letreiro); }
+  .grafico .valor { flex: none; font-variant-numeric: tabular-nums; color: var(--tinta-suave); white-space: nowrap; }
+  @keyframes crescer { from { transform: scaleX(0); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .etapa::before, .cursor, .grafico .barra { animation: none; }
+  }
+
   .vazio { color: var(--tinta-suave); border: 2px dashed var(--linha); border-radius: 10px; padding: 1.5rem; }
 
   @media (max-width: 640px) {
@@ -120,6 +146,7 @@
     .canhoto { border-radius: 10px 10px 0 0; }
     .corpo { border-radius: 0 0 10px 10px; border-left: 0; border-top: 2px dashed var(--linha); }
     .ingresso::before, .ingresso::after { display: none; }
+    .grafico { grid-template-columns: minmax(0, 8rem) minmax(0, 1fr); }
   }
 </style>
 </head>
@@ -204,34 +231,75 @@ function blocoConsultas(consultas) {
   return det;
 }
 
+// Barras quando o resultado é "uma coluna de texto + colunas numéricas" (ex.: top 10).
+function grafico(consultas) {
+  const c = [...consultas].reverse().find((q) => !q.erro && q.linhas.length >= 2);
+  if (!c || c.linhas.length > 25) return null;
+  const tipos = c.colunas.map((_, i) => c.linhas.every((l) => l[i] === null || typeof l[i] === "number") ? "num" : "txt");
+  const iRotulo = tipos.indexOf("txt"), iValor = tipos.lastIndexOf("num");
+  if (iRotulo < 0 || iValor < 0 || tipos.filter((t) => t === "txt").length > 2) return null;
+  const valores = c.linhas.map((l) => l[iValor] ?? 0);
+  if (valores.some((v) => v < 0)) return null;
+  const maximo = Math.max(...valores);
+  if (!(maximo > 0)) return null;
+
+  const g = el("div", "grafico");
+  g.setAttribute("role", "img");
+  g.setAttribute("aria-label", "Gráfico de barras de " + c.colunas[iValor] + " por " + c.colunas[iRotulo]);
+  g.append(el("p", "legenda", c.colunas[iValor] + " por " + c.colunas[iRotulo]));
+  c.linhas.forEach((linha, i) => {
+    const rotulo = el("span", "rotulo", String(linha[iRotulo] ?? "(vazio)"));
+    rotulo.title = rotulo.textContent;
+    const trilho = el("span", "trilho");
+    const barra = el("span", valores[i] === maximo ? "barra topo" : "barra");
+    barra.style.width = (valores[i] / maximo * 70) + "%";
+    barra.style.animationDelay = (i * 35) + "ms";
+    trilho.append(barra, el("span", "valor", valores[i].toLocaleString("pt-BR", { notation: "compact", maximumFractionDigits: 1 })));
+    g.append(rotulo, trilho);
+  });
+  return g;
+}
+
+function segundos(inicio) {
+  return ((performance.now() - inicio) / 1000).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " s";
+}
+
 function novoIngresso(pergunta) {
   const ingresso = el("article", "ingresso aguardando");
   const canhoto = el("div", "canhoto");
   canhoto.append(el("p", "", pergunta), el("small", "", ""));
   const corpo = el("div", "corpo");
-  corpo.append(el("div", "texto", "Consultando o catálogo…"));
+  corpo.append(el("p", "etapa", "O modelo está montando a consulta…"), el("div", "texto", ""));
   ingresso.append(canhoto, corpo);
   $("vazio")?.remove();
   lista.prepend(ingresso);
   return ingresso;
 }
 
-function preencher(ingresso, dados) {
+function preencher(ingresso, dados, tempo) {
   ingresso.classList.remove("aguardando");
+  ingresso.querySelector(".etapa")?.remove();
+  ingresso.querySelector(".sql-ao-vivo")?.remove();
   ingresso.querySelector(".texto").innerHTML = formatar(dados.resposta);
-  const rodape = [];
+  const rodape = tempo ? ["Respondido em " + tempo] : [];
   if (dados.cache) rodape.push("Resposta guardada, sem nova chamada ao modelo");
   else {
     if (dados.modelo) rodape.push("Modelo: " + dados.modelo);
     rodape.push(dados.requisicoes_llm + (dados.requisicoes_llm === 1 ? " chamada" : " chamadas") + " ao modelo");
   }
   ingresso.querySelector("small").innerHTML = rodape.map((t) => formatar(t)).join("<br>");
-  if (dados.consultas.length) ingresso.querySelector(".corpo").append(blocoConsultas(dados.consultas));
+  const corpo = ingresso.querySelector(".corpo");
+  const g = grafico(dados.consultas);
+  if (g) corpo.append(g);
+  if (dados.consultas.length) corpo.append(blocoConsultas(dados.consultas));
 }
 
 function falhar(ingresso, mensagem) {
   ingresso.classList.remove("aguardando");
   ingresso.classList.add("erro");
+  ingresso.querySelector(".etapa")?.remove();
+  ingresso.querySelector(".sql-ao-vivo")?.remove();
+  ingresso.querySelector("small").textContent = "";
   ingresso.querySelector(".texto").textContent = mensagem;
 }
 
@@ -249,24 +317,82 @@ async function atualizarCota() {
   } catch { /* a cota é só informativa */ }
 }
 
+function mensagemDeErro(status, detalhe) {
+  if (status === 503) return "Nenhum modelo respondeu agora. Os modelos gratuitos podem estar lotados ou a cota do dia acabou (ela renova às 21h). Tente de novo em alguns minutos.";
+  if (status === 422 && Array.isArray(detalhe)) return "A pergunta precisa ter entre 3 e 500 caracteres.";
+  return typeof detalhe === "string" ? detalhe : "Não foi possível responder (erro " + status + ").";
+}
+
+// Lê o corpo como Server-Sent Events e chama `tratar` com cada evento JSON.
+async function lerEventos(resposta, tratar) {
+  const leitor = resposta.body.getReader(), decodificador = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await leitor.read();
+    if (done) break;
+    buffer += decodificador.decode(value, { stream: true });
+    let fim;
+    while ((fim = buffer.indexOf("\n\n")) >= 0) {
+      const bloco = buffer.slice(0, fim);
+      buffer = buffer.slice(fim + 2);
+      for (const linha of bloco.split("\n")) if (linha.startsWith("data: ")) tratar(JSON.parse(linha.slice(6)));
+    }
+  }
+}
+
 async function perguntar(pergunta) {
   botao.disabled = true;
   botao.textContent = "Consultando…";
   const ingresso = novoIngresso(pergunta);
+  const etapa = ingresso.querySelector(".etapa"), texto = ingresso.querySelector(".texto");
+  const relogio = ingresso.querySelector("small");
+  relogio.classList.add("relogio");
+  const inicio = performance.now();
+  const timer = setInterval(() => { relogio.textContent = segundos(inicio); }, 100);
+  let acumulado = "", terminou = false, sqlAoVivo = null;
+
+  const tratar = (ev) => {
+    if (ev.tipo === "consulta") {
+      acumulado = "";  // descarta o que o modelo escreveu antes de consultar
+      texto.textContent = "";
+      etapa.textContent = "Rodando a consulta no catálogo…";
+      if (!sqlAoVivo) { sqlAoVivo = el("pre", "sql-ao-vivo"); etapa.after(sqlAoVivo); }
+      sqlAoVivo.textContent = ev.sql;
+    } else if (ev.tipo === "resultado") {
+      etapa.textContent = ev.erro
+        ? "A consulta falhou; o modelo vai tentar corrigir…"
+        : "A consulta trouxe " + ev.linhas.length + (ev.linhas.length === 1 ? " linha" : " linhas") + ". Escrevendo a resposta…";
+    } else if (ev.tipo === "texto") {
+      acumulado += ev.trecho;
+      texto.innerHTML = formatar(acumulado) + '<span class="cursor" aria-hidden="true"></span>';
+    } else if (ev.tipo === "fim") {
+      terminou = true;
+      clearInterval(timer);
+      preencher(ingresso, ev, ev.cache ? null : segundos(inicio));
+    } else if (ev.tipo === "erro") {
+      terminou = true;
+      falhar(ingresso, mensagemDeErro(ev.status, ev.detail));
+    }
+  };
+
   try {
-    const r = await fetch("/perguntar", {
+    const r = await fetch("/perguntar/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pergunta }),
     });
-    const corpo = await r.json().catch(() => null);
-    if (r.ok) preencher(ingresso, corpo);
-    else if (r.status === 503) falhar(ingresso, "Nenhum modelo respondeu agora. Os modelos gratuitos podem estar lotados ou a cota do dia acabou (ela renova às 21h). Tente de novo em alguns minutos.");
-    else if (r.status === 422 && Array.isArray(corpo?.detail)) falhar(ingresso, "A pergunta precisa ter entre 3 e 500 caracteres.");
-    else falhar(ingresso, corpo?.detail ?? "Não foi possível responder (erro " + r.status + ").");
+    if (!r.ok) {
+      const corpo = await r.json().catch(() => null);
+      terminou = true;
+      falhar(ingresso, mensagemDeErro(r.status, corpo?.detail));
+    } else {
+      await lerEventos(r, tratar);
+      if (!terminou) falhar(ingresso, "A conexão caiu antes do fim da resposta. Tente de novo.");
+    }
   } catch {
-    falhar(ingresso, "Sem conexão com o servidor. Confira se a API está rodando e tente de novo.");
+    if (!terminou) falhar(ingresso, "Sem conexão com o servidor. Confira se a API está rodando e tente de novo.");
   } finally {
+    clearInterval(timer);
     botao.disabled = false;
     botao.textContent = "Perguntar";
     atualizarCota();

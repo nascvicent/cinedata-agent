@@ -65,8 +65,9 @@ Atividade de GenAI do Rocket Lab 2026 (Visagio).
 
 | Rota | Descrição |
 |---|---|
-| `GET /` | Interface web: pergunta, resposta, SQL executado e tabela de dados |
+| `GET /` | Interface web: resposta em tempo real, SQL executado, gráfico de barras e tabela de dados |
 | `POST /perguntar` | Recebe `{"pergunta": "..."}` e devolve a resposta, o SQL executado, as linhas retornadas, o modelo usado e quantas chamadas ao LLM foram feitas |
+| `POST /perguntar/stream` | Mesma entrada, mas responde em etapas via Server-Sent Events (ver abaixo) |
 | `GET /schema` | Schema que o agente enxerga (gerado a partir do banco) |
 | `GET /cota` | Uso da cota diária de modelos gratuitos no OpenRouter |
 | `GET /health` | Verificação simples |
@@ -84,6 +85,28 @@ Exemplo de resposta de `/perguntar`:
   "cache": false
 }
 ```
+
+### Streaming (`/perguntar/stream`)
+
+Cada evento é uma linha `data: {json}` com um campo `tipo`:
+
+| `tipo` | Quando | Conteúdo |
+|---|---|---|
+| `consulta` | o modelo decidiu rodar um SQL | `sql` |
+| `resultado` | o SQL terminou | `colunas`, `linhas`, `truncado`, `erro` |
+| `texto` | o modelo escreveu mais um trecho da resposta | `trecho` |
+| `fim` | a resposta está completa | o mesmo corpo de `POST /perguntar` |
+| `erro` | nenhum modelo respondeu ou o limite de chamadas estourou | `status`, `detail` |
+
+```bash
+curl -N -X POST http://localhost:8000/perguntar/stream \
+  -H "Content-Type: application/json" \
+  -d '{"pergunta": "Os 5 filmes mais populares"}'
+```
+
+A interface web usa essa rota: mostra a etapa atual, o SQL assim que ele é gerado, o texto
+aparecendo enquanto o modelo escreve e, no fim, um gráfico de barras quando o resultado é
+"rótulo + número" (ex.: top 10 por receita).
 
 ## Como funciona
 
@@ -114,15 +137,16 @@ pytest
 ```
 
 Os testes usam um banco temporário e um modelo falso: **não consomem requisições do OpenRouter**.
-Cobrem os guardrails de SQL, a geração do schema e o fluxo completo da API (incluindo o cache).
+Cobrem os guardrails de SQL, a geração do schema e o fluxo completo da API (incluindo o cache
+e a ordem dos eventos do streaming).
 
 ## Estrutura
 
 ```
 app/
-  main.py       # rotas FastAPI
+  main.py       # rotas FastAPI (JSON e streaming SSE)
   static/index.html  # interface web (HTML único, sem build)
-  agent.py      # agente, tool executar_sql e fallback de modelos
+  agent.py      # agente, tool executar_sql, fallback de modelos e eventos de streaming
   prompts.py    # system prompt
   database.py   # acesso read-only, guardrails e introspecção do schema
   schemas.py    # modelos de entrada/saída da API

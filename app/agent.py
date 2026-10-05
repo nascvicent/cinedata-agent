@@ -1,11 +1,20 @@
 """Agente Text-to-SQL construído com PydanticAI sobre o OpenRouter."""
 
 import json
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
 from openai import AsyncOpenAI
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, AgentRunResultEvent, RunContext
+from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+)
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -42,7 +51,7 @@ def executar_sql(ctx: RunContext[Contexto], sql: str) -> str:
         sql: Uma única instrução SELECT (ou WITH ... SELECT) em dialeto SQLite.
     """
     cfg = ctx.deps.settings
-    registro: dict[str, Any] = {"sql": sql}
+    registro: dict[str, Any] = {"sql": sql, "id": ctx.tool_call_id}
     ctx.deps.consultas.append(registro)
     try:
         resultado = executar_select(
@@ -95,3 +104,46 @@ async def perguntar(agente: Agent[Contexto, str], settings: Settings, pergunta: 
         modelo=resultado.response.model_name,
         requisicoes_llm=resultado.usage.requests,
     )
+
+
+async def perguntar_em_etapas(
+    agente: Agent[Contexto, str], settings: Settings, pergunta: str
+) -> AsyncIterator[dict[str, Any]]:
+    """Mesmo fluxo de `perguntar`, mas emite cada etapa assim que ela acontece.
+
+    Eventos: `consulta` (SQL que vai rodar), `resultado` (dados ou erro da consulta),
+    `texto` (trecho da resposta) e, por último, `fim` (com a `Resposta` completa).
+    """
+    contexto = Contexto(settings=settings)
+    async with agente.run_stream_events(
+        pergunta,
+        deps=contexto,
+        usage_limits=UsageLimits(request_limit=settings.max_requisicoes_por_pergunta),
+    ) as eventos:
+        async for evento in eventos:
+            if isinstance(evento, PartStartEvent) and isinstance(evento.part, TextPart):
+                if evento.part.content:
+                    yield {"tipo": "texto", "trecho": evento.part.content}
+            elif isinstance(evento, PartDeltaEvent) and isinstance(evento.delta, TextPartDelta):
+                yield {"tipo": "texto", "trecho": evento.delta.content_delta}
+            elif isinstance(evento, FunctionToolCallEvent):
+                sql = evento.part.args_as_dict().get("sql", "")
+                yield {"tipo": "consulta", "sql": sql}
+            elif isinstance(evento, FunctionToolResultEvent):
+                registro = next(
+                    (c for c in contexto.consultas if c.get("id") == evento.tool_call_id), None
+                )
+                if registro:
+                    dados = {k: v for k, v in registro.items() if k != "id"}
+                    yield {"tipo": "resultado", **dados}
+            elif isinstance(evento, AgentRunResultEvent):
+                resultado = evento.result
+                yield {
+                    "tipo": "fim",
+                    "resposta": Resposta(
+                        texto=resultado.output,
+                        consultas=contexto.consultas,
+                        modelo=resultado.response.model_name,
+                        requisicoes_llm=resultado.usage.requests,
+                    ),
+                }
