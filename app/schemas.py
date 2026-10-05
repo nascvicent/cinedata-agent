@@ -11,6 +11,12 @@ class PerguntaRequest(BaseModel):
         max_length=500,
         examples=["Quais são os 10 filmes com maior receita em R$?"],
     )
+    conversa_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description="Id devolvido na resposta anterior, para perguntas de continuação. "
+        "Omita para começar uma conversa nova.",
+    )
 
 
 class ConsultaExecutada(BaseModel):
@@ -27,3 +33,4 @@ class PerguntaResponse(BaseModel):
     modelo: str | None = None
     requisicoes_llm: int = 0
     cache: bool = False
+    conversa_id: str | None = None

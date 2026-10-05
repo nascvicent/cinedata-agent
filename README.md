@@ -5,6 +5,21 @@ CineData Analytics, consultando a camada Gold (`cinerocket.db`, SQLite) em modo 
 
 Atividade de GenAI do Rocket Lab 2026 (Visagio).
 
+## Interface
+
+A resposta chega em tempo real: primeiro a etapa e o SQL gerado, depois o texto enquanto o
+modelo escreve.
+
+![Resposta chegando em tempo real, com o SQL já executado](docs/img/streaming.jpg)
+
+| Resposta | Gráfico gerado do resultado |
+|---|---|
+| ![Top 10 filmes por receita em R$](docs/img/resposta.jpg) | ![Gráfico de barras da receita](docs/img/grafico.jpg) |
+
+| Consulta e dados brutos, para conferência | Continuação da conversa ("E em dólar?") |
+|---|---|
+| ![SQL executado e tabela de dados](docs/img/sql-e-dados.jpg) | ![Pergunta de continuação usando o histórico](docs/img/conversa.jpg) |
+
 ## Stack
 
 | Item | Escolha |
@@ -66,7 +81,7 @@ Atividade de GenAI do Rocket Lab 2026 (Visagio).
 | Rota | Descrição |
 |---|---|
 | `GET /` | Interface web: resposta em tempo real, SQL executado, gráfico de barras e tabela de dados |
-| `POST /perguntar` | Recebe `{"pergunta": "..."}` e devolve a resposta, o SQL executado, as linhas retornadas, o modelo usado e quantas chamadas ao LLM foram feitas |
+| `POST /perguntar` | Recebe `{"pergunta": "...", "conversa_id": "..."}` (o id é opcional) e devolve a resposta, o SQL executado, as linhas retornadas, o modelo usado, quantas chamadas ao LLM foram feitas e o `conversa_id` |
 | `POST /perguntar/stream` | Mesma entrada, mas responde em etapas via Server-Sent Events (ver abaixo) |
 | `GET /schema` | Schema que o agente enxerga (gerado a partir do banco) |
 | `GET /cota` | Uso da cota diária de modelos gratuitos no OpenRouter |
@@ -82,9 +97,28 @@ Exemplo de resposta de `/perguntar`:
   ],
   "modelo": "nvidia/nemotron-3.5-lightning:free",
   "requisicoes_llm": 2,
-  "cache": false
+  "cache": false,
+  "conversa_id": "2838405552a247e0a2c9a7ec331c8d92"
 }
 ```
+
+### Histórico de conversa
+
+Para fazer uma pergunta de continuação ("e em dólar?", "e só os de 2023?"), envie o
+`conversa_id` devolvido pela resposta anterior. Sem ele, cada pergunta começa uma conversa nova.
+
+```bash
+curl -X POST http://localhost:8000/perguntar \
+  -H "Content-Type: application/json" \
+  -d '{"pergunta": "E em dólar?", "conversa_id": "2838405552a247e0a2c9a7ec331c8d92"}'
+```
+
+- O histórico fica no servidor, em memória, e guarda as **últimas 5 perguntas** de cada conversa.
+- Para economizar tokens, cada turno guarda só a pergunta, a resposta final e o SQL que deu
+  certo. Os dados brutos das consultas não são reenviados ao modelo.
+- O cache vale só para a primeira pergunta de uma conversa: uma continuação depende do
+  contexto e sempre consulta o modelo.
+- Na interface, o botão **Nova conversa** começa do zero.
 
 ### Streaming (`/perguntar/stream`)
 
@@ -132,6 +166,9 @@ pergunta -> FastAPI -> agente (PydanticAI) -> tool executar_sql -> SQLite (read-
 - **Proteção da cota**: no máximo `MAX_REQUISICOES_POR_PERGUNTA` chamadas ao LLM por pergunta
   (padrão 4; o caso normal usa 2) e cache em memória de perguntas repetidas.
 - **Transparência**: a resposta da API inclui o SQL executado e os dados brutos, para conferência.
+- **Resposta sem consulta**: alguns modelos gratuitos às vezes escrevem o SQL no texto em vez
+  de executá-lo. Um validador de saída detecta isso e devolve a instrução ao modelo
+  (`ModelRetry`). Só respostas apoiadas em uma consulta válida entram no cache.
 
 ## Testes
 
@@ -208,5 +245,5 @@ tests/
 ## Limitações
 
 - O cache é em memória e se perde ao reiniciar o servidor.
-- Não há memória de conversa: cada pergunta é independente.
+- O histórico de conversa também é em memória: some ao reiniciar o servidor.
 - A conta gratuita do OpenRouter permite 50 requisições por dia (reset às 21h de Brasília).

@@ -137,6 +137,23 @@
     .etapa::before, .cursor, .grafico .barra { animation: none; }
   }
 
+  /* Conversa */
+  .conversa { margin-top: .9rem; display: flex; align-items: center; gap: .4rem .75rem; flex-wrap: wrap; font-size: .9rem; color: var(--tinta-suave); }
+  .conversa[hidden] { display: none; }
+  .conversa strong { color: var(--tinta); }
+  .conversa button {
+    font-size: .85rem; padding: .25rem .75rem; border-radius: 999px;
+    border: 1px solid var(--cortina); background: transparent; color: var(--cortina);
+  }
+  .conversa button:hover { background: var(--cortina); color: #fff; }
+  .selo {
+    align-self: flex-start; font-family: var(--texto); font-size: .7rem; font-weight: 600;
+    letter-spacing: .07em; text-transform: uppercase;
+    padding: .1rem .45rem; border-radius: 3px; background: rgba(255, 255, 255, .18);
+  }
+  .divisoria { display: flex; align-items: center; gap: .75rem; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; color: var(--tinta-suave); }
+  .divisoria::before, .divisoria::after { content: ""; flex: 1; border-top: 2px dashed var(--linha); }
+
   .vazio { color: var(--tinta-suave); border: 2px dashed var(--linha); border-radius: 10px; padding: 1.5rem; }
 
   @media (max-width: 640px) {
@@ -164,6 +181,11 @@
     <button id="enviar" type="submit">Perguntar</button>
   </form>
 
+  <div class="conversa" id="conversa" hidden>
+    <span id="conversa-info"></span>
+    <button type="button" id="nova-conversa">Nova conversa</button>
+  </div>
+
   <div class="sugestoes" id="sugestoes">
     <span>Experimente:</span>
   </div>
@@ -184,6 +206,28 @@ const SUGESTOES = [
 
 const $ = (id) => document.getElementById(id);
 const form = $("formulario"), campo = $("pergunta"), botao = $("enviar"), lista = $("respostas");
+const PLACEHOLDER = campo.placeholder;
+
+// Conversa atual: o servidor guarda o histórico; aqui só lembramos o id dela.
+let conversaId = null, perguntasNaConversa = 0, geracao = 0;
+
+function atualizarConversa() {
+  const ativa = conversaId !== null;
+  $("conversa").hidden = !ativa;
+  campo.placeholder = ativa ? "Continue (ex.: e só os de 2023?) ou pergunte outra coisa" : PLACEHOLDER;
+  if (!ativa) return;
+  $("conversa-info").innerHTML = "Conversa em andamento: <strong>" + perguntasNaConversa + "</strong> "
+    + (perguntasNaConversa === 1 ? "pergunta" : "perguntas") + ". A próxima pode continuar a anterior.";
+}
+
+$("nova-conversa").addEventListener("click", () => {
+  conversaId = null;
+  perguntasNaConversa = 0;
+  geracao++;  // descarta o id de uma resposta que ainda esteja chegando
+  atualizarConversa();
+  if (lista.firstElementChild?.classList.contains("ingresso")) lista.prepend(el("p", "divisoria", "Nova conversa"));
+  campo.focus();
+});
 
 function el(tag, classe, texto) {
   const e = document.createElement(tag);
@@ -192,13 +236,14 @@ function el(tag, classe, texto) {
   return e;
 }
 
-// Markdown mínimo e seguro: escapa tudo, depois aplica **negrito** e `código`.
+// Markdown mínimo e seguro: escapa tudo, depois aplica **negrito**, *itálico* e `código`.
 function formatar(texto) {
   const seguro = texto.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   return seguro
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*\w])\*([^*\s](?:[^*\n]*[^*\s])?)\*(?![*\w])/g, "$1<em>$2</em>")
     .replace(/`([^`\n]+)`/g, "<code>$1</code>")
     .trim();
 }
@@ -264,9 +309,10 @@ function segundos(inicio) {
   return ((performance.now() - inicio) / 1000).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " s";
 }
 
-function novoIngresso(pergunta) {
+function novoIngresso(pergunta, continuacao) {
   const ingresso = el("article", "ingresso aguardando");
   const canhoto = el("div", "canhoto");
+  if (continuacao) canhoto.append(el("span", "selo", "Continuação"));
   canhoto.append(el("p", "", pergunta), el("small", "", ""));
   const corpo = el("div", "corpo");
   corpo.append(el("p", "etapa", "O modelo está montando a consulta…"), el("div", "texto", ""));
@@ -343,7 +389,8 @@ async function lerEventos(resposta, tratar) {
 async function perguntar(pergunta) {
   botao.disabled = true;
   botao.textContent = "Consultando…";
-  const ingresso = novoIngresso(pergunta);
+  const minhaGeracao = geracao, enviadoCom = conversaId;
+  const ingresso = novoIngresso(pergunta, enviadoCom !== null);
   const etapa = ingresso.querySelector(".etapa"), texto = ingresso.querySelector(".texto");
   const relogio = ingresso.querySelector("small");
   relogio.classList.add("relogio");
@@ -369,6 +416,11 @@ async function perguntar(pergunta) {
       terminou = true;
       clearInterval(timer);
       preencher(ingresso, ev, ev.cache ? null : segundos(inicio));
+      if (minhaGeracao === geracao && ev.conversa_id) {
+        conversaId = ev.conversa_id;
+        perguntasNaConversa++;
+        atualizarConversa();
+      }
     } else if (ev.tipo === "erro") {
       terminou = true;
       falhar(ingresso, mensagemDeErro(ev.status, ev.detail));
@@ -379,7 +431,7 @@ async function perguntar(pergunta) {
     const r = await fetch("/perguntar/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pergunta }),
+      body: JSON.stringify({ pergunta, conversa_id: enviadoCom }),
     });
     if (!r.ok) {
       const corpo = await r.json().catch(() => null);

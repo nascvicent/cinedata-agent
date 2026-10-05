@@ -10,14 +10,18 @@ Rotas:
 """
 
 import json
+import uuid
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic_ai.exceptions import AgentRunError, UsageLimitExceeded
+from pydantic_ai.messages import ModelMessage
 
 from app.agent import (
     OPENROUTER_BASE_URL,
@@ -25,6 +29,7 @@ from app.agent import (
     criar_agente,
     perguntar,
     perguntar_em_etapas,
+    turno_para_historico,
 )
 from app.config import get_settings
 from app.database import descrever_schema
@@ -38,7 +43,8 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("Defina OPENROUTER_API_KEY no arquivo .env (veja .env.example).")
     app.state.settings = settings
     app.state.agente = criar_agente(settings)
-    app.state.cache = {}  # pergunta normalizada -> PerguntaResponse
+    app.state.cache = {}  # pergunta normalizada -> (PerguntaResponse, turno)
+    app.state.conversas = OrderedDict()  # conversa_id -> turnos recentes
     yield
 
 
@@ -98,31 +104,75 @@ def _erro_http(exc: Exception) -> HTTPException:
     )
 
 
-def _montar_resposta(resultado: Resposta) -> PerguntaResponse:
-    return PerguntaResponse(
+MAX_TURNOS = 5  # turnos anteriores enviados ao modelo como histórico
+MAX_CONVERSAS = 500  # conversas guardadas em memória (as mais antigas saem primeiro)
+
+
+@dataclass
+class Conversa:
+    """Estado de uma pergunta dentro de uma conversa (histórico + cache)."""
+
+    id: str
+    turnos: list[list[ModelMessage]]
+    chave_cache: str | None  # só a 1ª pergunta da conversa usa o cache
+
+    @property
+    def historico(self) -> list[ModelMessage]:
+        return [m for turno in self.turnos for m in turno]
+
+
+def _abrir_conversa(estado, body: PerguntaRequest) -> Conversa:
+    conversa_id = body.conversa_id or uuid.uuid4().hex
+    turnos = estado.conversas.get(conversa_id, [])
+    return Conversa(conversa_id, turnos, None if turnos else _normalizar(body.pergunta))
+
+
+def _registrar_turno(estado, conversa: Conversa, turno: list[ModelMessage]) -> None:
+    estado.conversas[conversa.id] = (conversa.turnos + [turno])[-MAX_TURNOS:]
+    estado.conversas.move_to_end(conversa.id)
+    while len(estado.conversas) > MAX_CONVERSAS:
+        estado.conversas.popitem(last=False)
+
+
+def _do_cache(estado, conversa: Conversa) -> PerguntaResponse | None:
+    if conversa.chave_cache not in estado.cache:
+        return None
+    resposta, turno = estado.cache[conversa.chave_cache]
+    _registrar_turno(estado, conversa, turno)
+    return resposta.model_copy(update={"cache": True, "conversa_id": conversa.id})
+
+
+def _concluir(estado, conversa: Conversa, pergunta: str, resultado: Resposta) -> PerguntaResponse:
+    resposta = PerguntaResponse(
         resposta=resultado.texto,
         consultas=resultado.consultas,
         modelo=resultado.modelo,
         requisicoes_llm=resultado.requisicoes_llm,
+        conversa_id=conversa.id,
     )
+    turno = turno_para_historico(pergunta, resultado)
+    _registrar_turno(estado, conversa, turno)
+    # Só guarda respostas apoiadas em dados: recusas e respostas sem consulta válida
+    # (ex.: o modelo errou) não devem se repetir para sempre.
+    if conversa.chave_cache and any(not c.get("erro") for c in resultado.consultas):
+        estado.cache[conversa.chave_cache] = (resposta, turno)
+    return resposta
 
 
 @app.post("/perguntar", response_model=PerguntaResponse)
 async def rota_perguntar(body: PerguntaRequest, request: Request) -> PerguntaResponse:
     estado = request.app.state
-    chave_cache = _normalizar(body.pergunta)
-
-    if chave_cache in estado.cache:
-        return estado.cache[chave_cache].model_copy(update={"cache": True})
+    conversa = _abrir_conversa(estado, body)
+    if (do_cache := _do_cache(estado, conversa)) is not None:
+        return do_cache
 
     try:
-        resultado = await perguntar(estado.agente, estado.settings, body.pergunta)
+        resultado = await perguntar(
+            estado.agente, estado.settings, body.pergunta, conversa.historico
+        )
     except (AgentRunError, ExceptionGroup) as exc:
         raise _erro_http(exc) from exc
-
-    resposta = _montar_resposta(resultado)
-    estado.cache[chave_cache] = resposta
-    return resposta
+    return _concluir(estado, conversa, body.pergunta, resultado)
 
 
 def _sse(evento: dict) -> str:
@@ -137,18 +187,18 @@ async def rota_perguntar_stream(body: PerguntaRequest, request: Request) -> Stre
     O evento `fim` traz o mesmo corpo de `POST /perguntar`.
     """
     estado = request.app.state
-    chave_cache = _normalizar(body.pergunta)
+    conversa = _abrir_conversa(estado, body)
 
     async def eventos() -> AsyncIterator[str]:
-        if chave_cache in estado.cache:
-            resposta = estado.cache[chave_cache].model_copy(update={"cache": True})
-            yield _sse({"tipo": "fim", **resposta.model_dump()})
+        if (do_cache := _do_cache(estado, conversa)) is not None:
+            yield _sse({"tipo": "fim", **do_cache.model_dump()})
             return
         try:
-            async for evento in perguntar_em_etapas(estado.agente, estado.settings, body.pergunta):
+            async for evento in perguntar_em_etapas(
+                estado.agente, estado.settings, body.pergunta, conversa.historico
+            ):
                 if evento["tipo"] == "fim":
-                    resposta = _montar_resposta(evento["resposta"])
-                    estado.cache[chave_cache] = resposta
+                    resposta = _concluir(estado, conversa, body.pergunta, evento["resposta"])
                     yield _sse({"tipo": "fim", **resposta.model_dump()})
                 else:
                     yield _sse(evento)
